@@ -18,15 +18,21 @@
         }
         #controls {
             position: absolute;
-            bottom: 20px;
+            bottom: 10px; /* Adjusted for potentially more controls */
             width: 100%;
             display: flex;
-            justify-content: space-around;
+            flex-direction: column; /* Stack main controls and directional controls */
+            align-items: center; /* Center the groups */
             z-index: 100;
         }
+        .control-group {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 5px;
+        }
         .control-button {
-            padding: 15px 20px;
-            font-size: 18px;
+            padding: 12px 15px; /* Slightly smaller for more buttons */
+            font-size: 16px;
             color: white;
             background-color: rgba(0,0,0,0.5);
             border: 2px solid white;
@@ -39,10 +45,17 @@
 <body>
     <div id="info">Point your camera at a flat horizontal surface.</div>
     <div id="controls">
-        <div id="accelerate" class="control-button">Accelerate</div>
-        <div id="brake" class="control-button">Brake</div>
-        <div id="steer-left" class="control-button">Left</div>
-        <div id="steer-right" class="control-button">Right</div>
+        <div class="control-group" id="action-controls">
+            <!-- Action buttons like Start AR might go here or be positioned by JS -->
+        </div>
+        <div class="control-group" id="up-down-controls">
+            <div id="accelerate" class="control-button">Forward (Up)</div>
+        </div>
+        <div class="control-group" id="left-right-down-controls">
+            <div id="steer-left" class="control-button">Left</div>
+            <div id="brake" class="control-button">Brake (Down)</div>
+            <div id="steer-right" class="control-button">Right</div>
+        </div>
     </div>
     <script type="importmap">
         {
@@ -106,9 +119,20 @@
             container.appendChild(renderer.domElement);
 
             // Add AR button
-            document.body.appendChild(ARButton.createButton(renderer, {
-                requiredFeatures: ['hit-test'] // Request hit-testing feature
-            }));
+            const arButton = ARButton.createButton(renderer, {
+                requiredFeatures: ['hit-test'], // Request hit-testing feature
+                optionalFeatures: ['camera-access'] // Explicitly request camera access
+            });
+            arButton.style.zIndex = "200"; // Ensure it's above other elements
+            arButton.style.position = "absolute"; // Keep AR button absolutely positioned
+            arButton.style.zIndex = "200";
+            // Let's try putting AR button above all other controls for now
+            arButton.style.top = "20px";
+            arButton.style.left = "50%";
+            arButton.style.transform = "translateX(-50%)";
+            // Or, append it to the #action-controls group if preferred
+            // document.getElementById('action-controls').appendChild(arButton);
+            document.body.appendChild(arButton); // Keep it in body for simplicity with absolute positioning
 
             // Basic lighting
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
