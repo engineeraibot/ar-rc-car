@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebXR Car Drive</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            z-index: 100;
+            display:block;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
+            z-index: 100;
+        }
+        .control-button {
+            padding: 15px 20px;
+            font-size: 18px;
+            color: white;
+            background-color: rgba(0,0,0,0.5);
+            border: 2px solid white;
+            border-radius: 10px;
+            cursor: pointer;
+            user-select: none; /* Prevent text selection */
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Point your camera at a flat horizontal surface.</div>
+    <div id="controls">
+        <div id="accelerate" class="control-button">Accelerate</div>
+        <div id="brake" class="control-button">Brake</div>
+        <div id="steer-left" class="control-button">Left</div>
+        <div id="steer-right" class="control-button">Right</div>
+    </div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        // Main script will go here
+        import * as THREE from 'three';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+        let camera, scene, renderer;
+        let controller;
+        let reticle; // A visual marker for hit-testing
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+        let currentSurface = null; // Store the detected surface
+        let car = null;
+
+        // Car physics parameters
+        const carPhysics = {
+            speed: 0,
+            acceleration: 0,
+            steeringAngle: 0,
+            maxSpeed: 0.5, // units per second
+            engineForce: 0.3, // acceleration units per second^2
+            brakeForce: 0.8,
+            friction: 0.15, // friction coefficient (proportion of speed lost per second)
+            steerSpeed: 1.5, // radians per second
+            maxSteerAngle: Math.PI / 6, // 30 degrees
+            wheelBase: 0.3, // distance between front and rear axle - for more realistic steering
+
+            // Input states
+            isAccelerating: false,
+            isBraking: false,
+            isSteeringLeft: false,
+            isSteeringRight: false,
+
+            // For delta time calculation
+            lastTimestamp: 0,
+        };
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // Add AR button
+            document.body.appendChild(ARButton.createButton(renderer, {
+                requiredFeatures: ['hit-test'] // Request hit-testing feature
+            }));
+
+            // Basic lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+
+            // Reticle for hit-testing visualization
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.05, 0.07, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial()
+            );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+
+            // Car (composite object)
+            car = new THREE.Group();
+            const carBodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red body
+            const carCabinMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff }); // Blue cabin
+            const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 }); // Dark grey wheels
+
+            // Body
+            const bodyGeometry = new THREE.BoxGeometry(0.4, 0.1, 0.2); // length, height, width
+            const bodyMesh = new THREE.Mesh(bodyGeometry, carBodyMaterial);
+            bodyMesh.position.y = 0.05; // Base of the car body
+            car.add(bodyMesh);
+
+            // Cabin
+            const cabinGeometry = new THREE.BoxGeometry(0.2, 0.1, 0.18); // length, height, width
+            const cabinMesh = new THREE.Mesh(cabinGeometry, carCabinMaterial);
+            cabinMesh.position.set(0, 0.15, 0); // Positioned on top of the body, slightly back
+            car.add(cabinMesh);
+
+            // Wheels - Defining a simple wheel geometry
+            const wheelRadius = 0.04;
+            const wheelWidth = 0.03;
+            const wheelGeometry = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelWidth, 16);
+            wheelGeometry.rotateZ(Math.PI / 2); // Orient wheels correctly
+
+            const wheelPositions = [
+                { x: 0.15, y: 0.04, z: 0.1 },  // Front Right
+                { x: 0.15, y: 0.04, z: -0.1 }, // Front Left
+                { x: -0.15, y: 0.04, z: 0.1 }, // Rear Right
+                { x: -0.15, y: 0.04, z: -0.1 }  // Rear Left
+            ];
+
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                wheel.position.set(pos.x, pos.y, pos.z);
+                car.add(wheel);
+            });
+
+            // The car group itself will be positioned
+            car.position.set(0, 0, 0); // Initial position (will be updated by hit-test)
+            car.visible = false; // Initially hidden until a surface is found
+            scene.add(car);
+
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            renderer.setAnimationLoop(render);
+        }
+
+        function render(timestamp, frame) {
+            if (frame) {
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const session = renderer.xr.getSession();
+
+                if (hitTestSourceRequested === false) {
+                    session.requestReferenceSpace('viewer').then(function (referenceSpace) {
+                        session.requestHitTestSource({ space: referenceSpace }).then(function (source) {
+                            hitTestSource = source;
+                        });
+                    });
+
+                    session.addEventListener('end', function () {
+                        hitTestSourceRequested = false;
+                        hitTestSource = null;
+                        currentSurface = null;
+                        reticle.visible = false;
+                        if (car) car.visible = false;
+                        document.getElementById('info').textContent = "Point your camera at a flat horizontal surface.";
+                    });
+                    hitTestSourceRequested = true;
+                }
+
+                if (hitTestSource) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+                    if (hitTestResults.length) {
+                        const hit = hitTestResults[0];
+                        const hitMatrix = new THREE.Matrix4().fromArray(hit.getPose(referenceSpace).transform.matrix);
+
+                        // Try to find the largest horizontal plane.
+                        // For simplicity, we'll just use the first hit for now.
+                        // A more robust solution would analyze multiple hits or use plane detection.
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+
+                        // If a surface hasn't been selected, and we have a hit, place the car.
+                        if (!currentSurface && car) {
+                             // For now, we place the car on the first detected hit.
+                            currentSurface = { transform: hitMatrix }; // Store the matrix of the surface
+                            car.position.setFromMatrixPosition(currentSurface.transform);
+                            // The car model's origin (0,0,0 local) is designed to be where the wheels touch the ground.
+                            // So, no further y adjustment is needed if hitMatrix.getPosition() is the actual surface y.
+                            car.visible = true;
+                            reticle.visible = false; // Hide reticle once car is placed
+                            document.getElementById('info').textContent = "Car placed! Use controls to drive.";
+                        }
+
+                    } else {
+                        if (!currentSurface) reticle.visible = false;
+                    }
+                }
+            }
+
+            // Update car physics if car is placed
+            if (car && car.visible) {
+                updateCarPhysics(timestamp);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function updateCarPhysics(timestamp) {
+            if (carPhysics.lastTimestamp === 0) {
+                carPhysics.lastTimestamp = timestamp;
+                return;
+            }
+            const deltaTime = (timestamp - carPhysics.lastTimestamp) / 1000; // convert ms to seconds
+            carPhysics.lastTimestamp = timestamp;
+
+            // 1. Apply steering
+            let steerChange = 0;
+            if (carPhysics.isSteeringLeft) {
+                steerChange = carPhysics.steerSpeed * deltaTime;
+            } else if (carPhysics.isSteeringRight) {
+                steerChange = -carPhysics.steerSpeed * deltaTime;
+            }
+            carPhysics.steeringAngle += steerChange;
+            // Clamp steering angle
+            carPhysics.steeringAngle = Math.max(-carPhysics.maxSteerAngle, Math.min(carPhysics.maxSteerAngle, carPhysics.steeringAngle));
+
+            // Gradually return steering to center if no input (optional, but common)
+            if (!carPhysics.isSteeringLeft && !carPhysics.isSteeringRight) {
+                carPhysics.steeringAngle *= (1 - 5 * deltaTime); // Adjust 5 for how fast it returns
+                 if (Math.abs(carPhysics.steeringAngle) < 0.01) carPhysics.steeringAngle = 0;
+            }
+
+            // 2. Apply acceleration/braking
+            if (carPhysics.isAccelerating) {
+                carPhysics.speed += carPhysics.engineForce * deltaTime;
+            } else if (carPhysics.isBraking) {
+                let brakeDeceleration = carPhysics.brakeForce * deltaTime;
+                if (carPhysics.speed > 0) { // Braking while moving forward
+                    carPhysics.speed -= brakeDeceleration;
+                    if (carPhysics.speed < 0) carPhysics.speed = 0;
+                } else if (carPhysics.speed < 0) { // Braking while moving backward (increases reverse speed up to a point)
+                     carPhysics.speed -= brakeDeceleration * 0.5; // Slower reverse acceleration
+                } else { // Braking at standstill, start reversing
+                    carPhysics.speed = -carPhysics.engineForce * 0.3 * deltaTime; // Gentle reverse
+                }
+            }
+
+            // 3. Apply friction
+            if (Math.abs(carPhysics.speed) > 0.01 && !carPhysics.isAccelerating) {
+                carPhysics.speed -= carPhysics.friction * carPhysics.speed * deltaTime; // Friction proportional to speed
+            } else if (Math.abs(carPhysics.speed) < 0.01 && !carPhysics.isAccelerating && !carPhysics.isBraking) {
+                carPhysics.speed = 0; // Snap to zero if very slow and no input
+            }
+
+            // Clamp speed
+            carPhysics.speed = Math.max(-carPhysics.maxSpeed * 0.5, Math.min(carPhysics.maxSpeed, carPhysics.speed)); // Max reverse speed is half of max forward
+
+            // 4. Update car orientation (yaw) and position
+            if (Math.abs(carPhysics.speed) > 0.001) { // Only turn if moving
+                // Simple steering: Rotate car around its Y-axis
+                // More realistic steering involves calculating turning radius based on wheelbase
+                // const turnAngle = (carPhysics.speed / carPhysics.wheelBase) * Math.tan(carPhysics.steeringAngle) * deltaTime;
+                const turnAngle = carPhysics.steeringAngle * (carPhysics.speed / carPhysics.maxSpeed) * 1.5 * deltaTime; // Simpler, speed-dependent turn
+                car.rotation.y += turnAngle;
+            }
+
+            // 5. Move the car
+            const forwardDirection = new THREE.Vector3();
+            car.getWorldDirection(forwardDirection); // Gets the local -Z direction in world space
+            // Our car model's front is positive X. Let's adjust.
+            // We can get the car's forward vector (local X+) in world space like this:
+            const carForward = new THREE.Vector3(1, 0, 0);
+            carForward.applyQuaternion(car.quaternion);
+
+            car.position.addScaledVector(carForward, carPhysics.speed * deltaTime);
+
+            // Keep car on the currentSurface (simple y-axis lock for now)
+            if (currentSurface) {
+                const surfaceY = new THREE.Vector3().setFromMatrixPosition(currentSurface.transform).y;
+                car.position.y = surfaceY; // Assuming car's local origin (wheel bottom) is at surfaceY
+            }
+        }
+
+        // Touch controls
+        const controls = {
+            accelerate: document.getElementById('accelerate'),
+            brake: document.getElementById('brake'),
+            steerLeft: document.getElementById('steer-left'),
+            steerRight: document.getElementById('steer-right'),
+        };
+
+        controls.accelerate.addEventListener('pointerdown', () => { carPhysics.isAccelerating = true; });
+        controls.accelerate.addEventListener('pointerup', () => { carPhysics.isAccelerating = false; });
+        controls.accelerate.addEventListener('pointerleave', () => { carPhysics.isAccelerating = false; }); // Handle finger sliding off
+
+        controls.brake.addEventListener('pointerdown', () => { carPhysics.isBraking = true; });
+        controls.brake.addEventListener('pointerup', () => { carPhysics.isBraking = false; });
+        controls.brake.addEventListener('pointerleave', () => { carPhysics.isBraking = false; });
+
+        controls.steerLeft.addEventListener('pointerdown', () => { carPhysics.isSteeringLeft = true; });
+        controls.steerLeft.addEventListener('pointerup', () => { carPhysics.isSteeringLeft = false; });
+        controls.steerLeft.addEventListener('pointerleave', () => { carPhysics.isSteeringLeft = false; });
+
+        controls.steerRight.addEventListener('pointerdown', () => { carPhysics.isSteeringRight = true; });
+        controls.steerRight.addEventListener('pointerup', () => { carPhysics.isSteeringRight = false; });
+        controls.steerRight.addEventListener('pointerleave', () => { carPhysics.isSteeringRight = false; });
+
+
+    </script>
+</body>
+</html>
