@@ -33,6 +33,12 @@
         .control-button {
             padding: 12px 15px; /* Slightly smaller for more buttons */
             font-size: 16px;
+        }
+        /* Style for the AR button specifically if needed, or all buttons in action-controls */
+        #action-controls button {
+            padding: 10px 15px;
+            font-size: 14px;
+            margin-bottom: 5px; /* Add some margin if it's above other controls */
             color: white;
             background-color: rgba(0,0,0,0.5);
             border: 2px solid white;
@@ -120,19 +126,18 @@
 
             // Add AR button
             const arButton = ARButton.createButton(renderer, {
-                requiredFeatures: ['hit-test'], // Request hit-testing feature
-                optionalFeatures: ['camera-access'] // Explicitly request camera access
+                requiredFeatures: ['hit-test', 'camera-access'], // Request hit-testing and camera access
             });
-            arButton.style.zIndex = "200"; // Ensure it's above other elements
-            arButton.style.position = "absolute"; // Keep AR button absolutely positioned
-            arButton.style.zIndex = "200";
+            // arButton.style.zIndex = "200"; // Ensure it's above other elements
+            // arButton.style.position = "absolute"; // Keep AR button absolutely positioned
+            // arButton.style.zIndex = "200";
             // Let's try putting AR button above all other controls for now
-            arButton.style.top = "20px";
-            arButton.style.left = "50%";
-            arButton.style.transform = "translateX(-50%)";
+            // arButton.style.top = "20px";
+            // arButton.style.left = "50%";
+            // arButton.style.transform = "translateX(-50%)";
             // Or, append it to the #action-controls group if preferred
-            // document.getElementById('action-controls').appendChild(arButton);
-            document.body.appendChild(arButton); // Keep it in body for simplicity with absolute positioning
+            document.getElementById('action-controls').appendChild(arButton);
+            // document.body.appendChild(arButton); // Keep it in body for simplicity with absolute positioning
 
             // Basic lighting
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
