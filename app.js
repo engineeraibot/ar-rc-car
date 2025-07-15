@@ -12,7 +12,23 @@ renderer.setSize( window.innerWidth, window.innerHeight );
 renderer.xr.enabled = true;
 document.body.appendChild( renderer.domElement );
 
-document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
+if ( 'xr' in navigator ) {
+	navigator.xr.isSessionSupported( 'immersive-ar' ).then( function ( supported ) {
+		if ( supported ) {
+			document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
+		} else {
+			const message = document.createElement( 'a' );
+			message.href = 'https://caniuse.com/webxr';
+			message.innerHTML = 'AR NOT SUPPORTED';
+			document.body.appendChild( message );
+		}
+	} );
+} else {
+	const message = document.createElement( 'a' );
+	message.href = 'https://caniuse.com/webxr';
+	message.innerHTML = 'AR NOT SUPPORTED';
+	document.body.appendChild( message );
+}
 
 function createCar() {
 	const car = new THREE.Group();
